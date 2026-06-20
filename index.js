@@ -416,6 +416,107 @@ async function run() {
     });
 
     // =====================
+    // Stripe Subscription APIs (Step 12)
+    // =====================
+
+    // POST: Create Checkout Session for a Subscription
+    app.post("/api/create-subscription-checkout", verifyToken, async (req, res) => {
+      try {
+        const { tier } = req.body;
+        
+        let amount = 0;
+        let title = "";
+        
+        if (tier === "premium") {
+           amount = 999;
+           title = "Premium Tier Upgrade";
+        } else if (tier === "pro") {
+           amount = 1999;
+           title = "Pro Tier Upgrade";
+        } else {
+           return res.status(400).json({ msg: "Invalid subscription tier" });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: title,
+                  description: `Unlock ${tier} features on ArtHub.`,
+                },
+                unit_amount: amount, 
+              },
+              quantity: 1,
+            },
+          ],
+          // Using payment mode for the assignment mockup to avoid requiring pre-created Stripe Product IDs
+          mode: "payment", 
+          success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing`,
+          metadata: {
+            userId: req.user.id,
+            tier: tier,
+            type: "subscription_upgrade"
+          },
+        });
+
+        res.json({ url: session.url });
+      } catch (error) {
+        console.error("Stripe subscription session error:", error);
+        res.status(500).json({ msg: "Failed to create subscription checkout session" });
+      }
+    });
+
+    // GET: Verify successful subscription and upgrade user
+    app.get("/api/subscription-success", verifyToken, async (req, res) => {
+      try {
+        const { session_id } = req.query;
+        if (!session_id) return res.status(400).json({ msg: "Session ID is required" });
+
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        
+        if (session.payment_status !== "paid") {
+          return res.status(400).json({ msg: "Payment not completed" });
+        }
+
+        const { userId, tier } = session.metadata;
+
+        // Check if transaction already exists (idempotency)
+        const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
+        if (existingTx) {
+          return res.json({ msg: "Upgrade already fulfilled", tier });
+        }
+
+        // 1. Record the transaction
+        const transaction = {
+          stripeSessionId: session_id,
+          userId,
+          amount: session.amount_total / 100, 
+          currency: session.currency,
+          createdAt: new Date().toISOString(),
+          type: "subscription_upgrade",
+          tier
+        };
+        await transactionCollection.insertOne(transaction);
+
+        // 2. Upgrade user in database
+        // Also update the session in better-auth? We just update the userCollection
+        await userCollection.updateOne(
+          { id: userId }, // better-auth uses string 'id' for the primary key
+          { $set: { tier: tier } }
+        );
+
+        res.json({ msg: "Subscription successful", tier });
+      } catch (error) {
+        console.error("Error fulfilling subscription:", error);
+        res.status(500).json({ msg: "Failed to fulfill subscription" });
+      }
+    });
+
+    // =====================
     // Health Check
     // =====================
     app.get("/", (req, res) => {
