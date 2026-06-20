@@ -221,6 +221,102 @@ async function run() {
     });
 
     // =====================
+    // Artist Dashboard APIs (Step 9)
+    // =====================
+
+    // GET: All artworks belonging to the logged-in artist
+    app.get("/api/artist/artworks", verifyToken, verifyArtist, async (req, res) => {
+      try {
+        const artistId = req.user.id;
+        const myArtworks = await artworkCollection
+          .find({ artistId })
+          .sort({ _id: -1 })
+          .toArray();
+        res.json(myArtworks);
+      } catch (error) {
+        console.error("Error fetching artist artworks:", error);
+        res.status(500).json({ msg: "Failed to fetch artworks" });
+      }
+    });
+
+    // POST: Create new artwork
+    app.post("/api/artworks", verifyToken, verifyArtist, async (req, res) => {
+      try {
+        const { title, description, price, category, image } = req.body;
+        
+        const newArtwork = {
+          title,
+          description,
+          price: Number(price),
+          category,
+          image,
+          artistId: req.user.id,
+          artistName: req.user.name,
+          status: "available",
+          createdAt: new Date().toISOString()
+        };
+
+        const result = await artworkCollection.insertOne(newArtwork);
+        res.status(201).json({ msg: "Artwork created successfully", id: result.insertedId });
+      } catch (error) {
+        console.error("Error creating artwork:", error);
+        res.status(500).json({ msg: "Failed to create artwork" });
+      }
+    });
+
+    // PUT: Update artwork
+    app.put("/api/artworks/:id", verifyToken, verifyArtist, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id)) return res.status(400).json({ msg: "Invalid ID" });
+
+        const { title, description, price, category, image } = req.body;
+        
+        // Verify ownership
+        const artwork = await artworkCollection.findOne({ _id: new ObjectId(id) });
+        if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
+        if (artwork.artistId !== req.user.id) return res.status(403).json({ msg: "Forbidden" });
+
+        const updatedData = {
+          title,
+          description,
+          price: Number(price),
+          category,
+          image
+        };
+
+        await artworkCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedData }
+        );
+
+        res.json({ msg: "Artwork updated successfully" });
+      } catch (error) {
+        console.error("Error updating artwork:", error);
+        res.status(500).json({ msg: "Failed to update artwork" });
+      }
+    });
+
+    // DELETE: Delete artwork
+    app.delete("/api/artworks/:id", verifyToken, verifyArtist, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id)) return res.status(400).json({ msg: "Invalid ID" });
+
+        // Verify ownership
+        const artwork = await artworkCollection.findOne({ _id: new ObjectId(id) });
+        if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
+        if (artwork.artistId !== req.user.id) return res.status(403).json({ msg: "Forbidden" });
+
+        await artworkCollection.deleteOne({ _id: new ObjectId(id) });
+        res.json({ msg: "Artwork deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting artwork:", error);
+        res.status(500).json({ msg: "Failed to delete artwork" });
+      }
+    });
+
+    // =====================
     // Health Check
     // =====================
     app.get("/", (req, res) => {
