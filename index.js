@@ -35,13 +35,18 @@ const JWKS = createRemoteJWKSet(
 
 // Middleware to verify JWT Token
 const verifyToken = async (req, res, next) => {
+  let token = null;
+
   const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ msg: "Unauthorized" });
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.headers.cookie) {
+    const cookies = req.headers.cookie.split(";").map(c => c.trim());
+    const sessionCookie = cookies.find(c => c.startsWith("better-auth.session_token="));
+    if (sessionCookie) {
+      token = sessionCookie.split("=")[1];
+    }
   }
-
-  const token = authHeader.split(" ")[1];
 
   if (!token) {
     return res.status(401).json({ msg: "Unauthorized" });
@@ -49,7 +54,9 @@ const verifyToken = async (req, res, next) => {
 
   try {
     const { payload } = await jwtVerify(token, JWKS);
-    req.user = payload;
+    // BetterAuth JWT payload typically wraps the user data in a 'user' property or mixes it.
+    // Let's ensure req.user is robust.
+    req.user = payload.user || payload;
     next();
   } catch (error) {
     console.error("JWT Verification error:", error);
@@ -60,10 +67,15 @@ const verifyToken = async (req, res, next) => {
 // Middleware factory for verifying specific user roles
 const verifyRole = (roles) => {
   return (req, res, next) => {
-    const user = req.user;
+    const user = req.user?.user || req.user;
+    
     if (!user || !roles.includes(user.role)) {
+      console.error("Authorization failed. User object:", req.user);
       return res.status(403).json({ msg: "Forbidden: Access denied" });
     }
+    
+    // Normalize req.user to just the user object for downstream routes
+    req.user = user;
     next();
   };
 };
@@ -622,6 +634,48 @@ async function run() {
       } catch (error) {
         console.error("Error deleting comment:", error);
         res.status(500).json({ msg: "Failed to delete comment" });
+      }
+    });
+
+    // =====================
+    // Admin APIs (Step 15)
+    // =====================
+
+    // GET: Fetch all users
+    app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const users = await userCollection.find({}, { projection: { password: 0 } }).toArray();
+        res.json(users);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).json({ msg: "Failed to fetch users" });
+      }
+    });
+
+    // PUT: Update user role
+    app.put("/api/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const userId = req.params.id; // better-auth uses string IDs
+        const { role } = req.body;
+
+        if (!["user", "artist", "admin"].includes(role)) {
+          return res.status(400).json({ msg: "Invalid role" });
+        }
+
+        // Prevent admin from removing their own admin role to avoid lockout
+        if (userId === req.user.id && role !== "admin") {
+          return res.status(400).json({ msg: "Cannot demote yourself" });
+        }
+
+        await userCollection.updateOne(
+          { id: userId },
+          { $set: { role: role } }
+        );
+
+        res.json({ msg: "Role updated successfully" });
+      } catch (error) {
+        console.error("Error updating role:", error);
+        res.status(500).json({ msg: "Failed to update role" });
       }
     });
 
