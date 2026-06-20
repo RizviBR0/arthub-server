@@ -473,14 +473,14 @@ async function run() {
     // PUT: Update User Profile
     app.put("/api/user/profile", verifyToken, async (req, res) => {
       try {
-        const { name } = req.body;
+        const { bio } = req.body;
         const userId = req.user.id;
 
-        if (!name) return res.status(400).json({ msg: "Name is required" });
-
+        // BetterAuth SDK handles name and image updates directly.
+        // We use this endpoint for custom fields like bio.
         await userCollection.updateOne(
           { id: userId },
-          { $set: { name: name } }
+          { $set: { bio: bio || "" } }
         );
 
         res.json({ msg: "Profile updated successfully" });
