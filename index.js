@@ -29,6 +29,49 @@ const client = new MongoClient(uri, {
   },
 });
 
+// BetterAuth JWKS Endpoint setup
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/jwks`)
+);
+
+// Middleware to verify JWT Token
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+    next();
+  } catch (error) {
+    console.error("JWT Verification error:", error);
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+};
+
+// Middleware factory for verifying specific user roles
+const verifyRole = (roles) => {
+  return (req, res, next) => {
+    const user = req.user;
+    if (!user || !roles.includes(user.role)) {
+      return res.status(403).json({ msg: "Forbidden: Access denied" });
+    }
+    next();
+  };
+};
+
+const verifyArtist = verifyRole(["artist"]);
+const verifyAdmin = verifyRole(["admin"]);
+
 async function run() {
   try {
     await client.connect();
