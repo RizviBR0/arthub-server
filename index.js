@@ -183,6 +183,43 @@ async function run() {
       }
     });
 
+    // GET: Single Artwork Details
+    app.get("/api/artworks/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        // Verify it's a valid ObjectId to prevent crashes
+        if (!ObjectId.isValid(id)) {
+          // If it's a placeholder ID (e.g. from UI mock), return dummy data
+          if (["1", "2", "3", "4", "5", "6"].includes(id)) {
+             return res.json({
+               _id: id,
+               title: "Golden Horizon",
+               artistName: "Elena Rostova",
+               artistId: "artist123",
+               price: 450,
+               category: "painting",
+               description: "A beautiful exploration of light and shadow, capturing the ephemeral moments of twilight over the Mediterranean Sea. The intricate brushwork and warm color palette evoke a sense of deep tranquility and timeless beauty. Perfect for any modern or classical interior.",
+               image: "https://images.unsplash.com/photo-1579783902614-a3fb3927b6a5?auto=format&fit=crop&q=80&w=1200",
+               createdAt: new Date().toISOString(),
+               status: "available"
+             });
+          }
+          return res.status(400).json({ msg: "Invalid artwork ID format" });
+        }
+
+        const artwork = await artworkCollection.findOne({ _id: new ObjectId(id) });
+        
+        if (!artwork) {
+          return res.status(404).json({ msg: "Artwork not found" });
+        }
+
+        res.json(artwork);
+      } catch (error) {
+        console.error("Error fetching artwork details:", error);
+        res.status(500).json({ msg: "Failed to fetch artwork details" });
+      }
+    });
+
     // =====================
     // Health Check
     // =====================
