@@ -5,7 +5,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
+
 dotenv.config();
 
 const uri = process.env.MONGODB_URI;
@@ -29,40 +29,56 @@ const client = new MongoClient(uri, {
   },
 });
 
-const JWKS = createRemoteJWKSet(
-  new URL(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/jwks`)
-);
+// verifyToken is defined inside run() after DB connection is established
+let sessionCollection;
+let userCollectionForAuth;
 
-// Middleware to verify JWT Token
 const verifyToken = async (req, res, next) => {
   let token = null;
 
-  console.log("verifyToken Check - Authorization Header:", req.headers.authorization);
-  console.log("verifyToken Check - Cookies:", req.headers.cookie);
-
+  // Check Authorization header first
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.split(" ")[1];
-  } else if (req.headers.cookie) {
+  }
+
+  // Fall back to cookie
+  if (!token && req.headers.cookie) {
     const cookies = req.headers.cookie.split(";").map(c => c.trim());
     const sessionCookie = cookies.find(c => c.startsWith("better-auth.session_token="));
     if (sessionCookie) {
-      token = sessionCookie.split("=")[1];
+      token = sessionCookie.split("=").slice(1).join("=");
     }
   }
 
   if (!token) {
-    return res.status(401).json({ msg: "Unauthorized" });
+    return res.status(401).json({ msg: "Unauthorized: No token provided" });
   }
 
   try {
-    const { payload } = await jwtVerify(token, JWKS);
-    // BetterAuth JWT payload typically wraps the user data in a 'user' property or mixes it.
-    // Let's ensure req.user is robust.
-    req.user = payload.user || payload;
+    // Look up the session directly in MongoDB
+    const session = await sessionCollection.findOne({ token: token });
+
+    if (!session) {
+      return res.status(401).json({ msg: "Unauthorized: Invalid session" });
+    }
+
+    // Check if session has expired
+    if (session.expiresAt && new Date(session.expiresAt) < new Date()) {
+      return res.status(401).json({ msg: "Unauthorized: Session expired" });
+    }
+
+    // Look up the user
+    const user = await userCollectionForAuth.findOne({ id: session.userId });
+
+    if (!user) {
+      return res.status(401).json({ msg: "Unauthorized: User not found" });
+    }
+
+    req.user = user;
     next();
   } catch (error) {
-    console.error("JWT Verification error:", error);
+    console.error("Session verification error:", error);
     return res.status(401).json({ msg: "Unauthorized" });
   }
 };
@@ -70,15 +86,9 @@ const verifyToken = async (req, res, next) => {
 // Middleware factory for verifying specific user roles
 const verifyRole = (roles) => {
   return (req, res, next) => {
-    const user = req.user?.user || req.user;
-    
-    if (!user || !roles.includes(user.role)) {
-      console.error("Authorization failed. User object:", req.user);
+    if (!req.user || !roles.includes(req.user.role)) {
       return res.status(403).json({ msg: "Forbidden: Access denied" });
     }
-    
-    // Normalize req.user to just the user object for downstream routes
-    req.user = user;
     next();
   };
 };
@@ -97,6 +107,10 @@ async function run() {
     const transactionCollection = db.collection("transactions");
     const commentCollection = db.collection("comments");
     const subscriptionCollection = db.collection("subscriptions");
+
+    // Wire up collections for auth middleware
+    sessionCollection = db.collection("session");
+    userCollectionForAuth = userCollection;
 
                 
     // GET: Featured Artworks (Latest 6)
@@ -679,6 +693,72 @@ async function run() {
       } catch (error) {
         console.error("Error updating role:", error);
         res.status(500).json({ msg: "Failed to update role" });
+      }
+    });
+
+    // =====================
+    // Admin APIs (Step 16)
+    // =====================
+
+    // GET: All artworks for admin
+    app.get("/api/admin/artworks", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const artworks = await artworkCollection.find({}).sort({ createdAt: -1 }).toArray();
+        res.json(artworks);
+      } catch (error) {
+        console.error("Error fetching artworks:", error);
+        res.status(500).json({ msg: "Failed to fetch artworks" });
+      }
+    });
+
+    // DELETE: Admin delete any artwork
+    app.delete("/api/admin/artworks/:id", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await artworkCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ msg: "Artwork not found" });
+        }
+        res.json({ msg: "Artwork deleted" });
+      } catch (error) {
+        console.error("Error deleting artwork:", error);
+        res.status(500).json({ msg: "Failed to delete artwork" });
+      }
+    });
+
+    // GET: All transactions for admin
+    app.get("/api/admin/transactions", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const transactions = await transactionCollection.find({}).sort({ createdAt: -1 }).toArray();
+        res.json(transactions);
+      } catch (error) {
+        console.error("Error fetching transactions:", error);
+        res.status(500).json({ msg: "Failed to fetch transactions" });
+      }
+    });
+
+    // GET: Admin analytics summary
+    app.get("/api/admin/analytics", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalArtists = await userCollection.countDocuments({ role: "artist" });
+        const totalArtworks = await artworkCollection.countDocuments();
+        const totalTransactions = await transactionCollection.countDocuments();
+
+        const revenueResult = await transactionCollection.aggregate([
+          { $group: { _id: null, total: { $sum: "$amount" } } }
+        ]).toArray();
+        const totalRevenue = revenueResult[0]?.total || 0;
+
+        res.json({
+          totalUsers,
+          totalArtists,
+          totalArtworks,
+          totalTransactions,
+          totalRevenue,
+        });
+      } catch (error) {
+        console.error("Error fetching analytics:", error);
+        res.status(500).json({ msg: "Failed to fetch analytics" });
       }
     });
 
