@@ -118,6 +118,71 @@ async function run() {
       }
     });
 
+    // GET: Browse Artworks (Search, Filter, Sort, Pagination)
+    app.get("/api/artworks", async (req, res) => {
+      try {
+        const { search, category, minPrice, maxPrice, sort, page = 1, limit = 8 } = req.query;
+        
+        let query = {};
+        
+        // Search by title or artistName
+        if (search) {
+          query.$or = [
+            { title: { $regex: search, $options: "i" } },
+            { artistName: { $regex: search, $options: "i" } }
+          ];
+        }
+        
+        // Filter by category
+        if (category && category !== "all") {
+          query.category = category;
+        }
+        
+        // Filter by price range
+        if (minPrice || maxPrice) {
+          query.price = {};
+          if (minPrice) query.price.$gte = Number(minPrice);
+          if (maxPrice) query.price.$lte = Number(maxPrice);
+        }
+
+        // Exclude sold out artworks from public browsing by default
+        query.status = { $ne: "sold" };
+
+        // Sorting
+        let sortOption = { _id: -1 }; // default: newest
+        if (sort === "price-asc") sortOption = { price: 1 };
+        if (sort === "price-desc") sortOption = { price: -1 };
+
+        // Pagination
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        const totalArtworks = await artworkCollection.countDocuments(query);
+        const totalPages = Math.ceil(totalArtworks / limitNum);
+
+        const artworks = await artworkCollection
+          .find(query)
+          .sort(sortOption)
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        res.json({
+          artworks,
+          pagination: {
+            totalItems: totalArtworks,
+            totalPages,
+            currentPage: pageNum,
+            limit: limitNum
+          }
+        });
+      } catch (error) {
+        console.error("Error fetching artworks:", error);
+        res.status(500).json({ msg: "Failed to fetch artworks" });
+      }
+    });
+
     // =====================
     // Health Check
     // =====================
