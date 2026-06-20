@@ -317,6 +317,105 @@ async function run() {
     });
 
     // =====================
+    // Stripe Checkout APIs (Step 11)
+    // =====================
+    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
+    // POST: Create Checkout Session for an Artwork
+    app.post("/api/create-checkout-session", verifyToken, async (req, res) => {
+      try {
+        const { artworkId } = req.body;
+        if (!ObjectId.isValid(artworkId)) return res.status(400).json({ msg: "Invalid artwork ID" });
+
+        const artwork = await artworkCollection.findOne({ _id: new ObjectId(artworkId) });
+        if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
+        if (artwork.status === "sold") return res.status(400).json({ msg: "Artwork is already sold" });
+        if (artwork.artistId === req.user.id) return res.status(400).json({ msg: "You cannot buy your own artwork" });
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: artwork.title,
+                  images: [artwork.image],
+                  description: `Original artwork by ${artwork.artistName}`,
+                },
+                unit_amount: Math.round(artwork.price * 100), // Stripe expects cents
+              },
+              quantity: 1,
+            },
+          ],
+          mode: "payment",
+          success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/artworks/${artworkId}`,
+          metadata: {
+            artworkId: artworkId,
+            buyerId: req.user.id,
+            buyerName: req.user.name,
+            artistId: artwork.artistId,
+            type: "artwork_purchase"
+          },
+        });
+
+        res.json({ url: session.url });
+      } catch (error) {
+        console.error("Stripe session error:", error);
+        res.status(500).json({ msg: "Failed to create checkout session" });
+      }
+    });
+
+    // GET: Verify successful checkout and fulfill order
+    app.get("/api/checkout-success", verifyToken, async (req, res) => {
+      try {
+        const { session_id } = req.query;
+        if (!session_id) return res.status(400).json({ msg: "Session ID is required" });
+
+        // Retrieve the session from Stripe
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        
+        if (session.payment_status !== "paid") {
+          return res.status(400).json({ msg: "Payment not completed" });
+        }
+
+        const { artworkId, buyerId, buyerName, artistId } = session.metadata;
+
+        // Check if transaction already exists (idempotency)
+        const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
+        if (existingTx) {
+          return res.json({ msg: "Order already fulfilled", transaction: existingTx });
+        }
+
+        // 1. Record the transaction
+        const transaction = {
+          stripeSessionId: session_id,
+          artworkId,
+          buyerId,
+          buyerName,
+          artistId,
+          amount: session.amount_total / 100, // Convert back from cents
+          currency: session.currency,
+          createdAt: new Date().toISOString(),
+          type: "artwork_purchase"
+        };
+        await transactionCollection.insertOne(transaction);
+
+        // 2. Mark artwork as sold
+        await artworkCollection.updateOne(
+          { _id: new ObjectId(artworkId) },
+          { $set: { status: "sold" } }
+        );
+
+        res.json({ msg: "Order fulfilled successfully", transaction });
+      } catch (error) {
+        console.error("Error fulfilling order:", error);
+        res.status(500).json({ msg: "Failed to fulfill order" });
+      }
+    });
+
+    // =====================
     // Health Check
     // =====================
     app.get("/", (req, res) => {
