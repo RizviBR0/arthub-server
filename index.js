@@ -29,7 +29,6 @@ const client = new MongoClient(uri, {
   },
 });
 
-// BetterAuth JWKS Endpoint setup
 const JWKS = createRemoteJWKSet(
   new URL(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/jwks`)
 );
@@ -84,17 +83,12 @@ async function run() {
     const commentCollection = db.collection("comments");
     const subscriptionCollection = db.collection("subscriptions");
 
-    // =====================
-    // Public APIs (Step 6)
-    // =====================
-    
+                
     // GET: Featured Artworks (Latest 6)
     app.get("/api/artworks/featured", async (req, res) => {
       try {
         const featured = await artworkCollection
-          .find({ status: { $ne: "sold" } }) // Don't show sold out items by default or just show them all
-          .sort({ _id: -1 }) // simple way to get latest if no createdAt
-          .limit(6)
+          .find({ status: { $ne: "sold" } })           .sort({ _id: -1 })           .limit(6)
           .toArray();
         res.json(featured);
       } catch (error) {
@@ -145,8 +139,7 @@ async function run() {
           if (maxPrice) query.price.$lte = Number(maxPrice);
         }
 
-        // Exclude sold out artworks from public browsing by default
-        query.status = { $ne: "sold" };
+                query.status = { $ne: "sold" };
 
         // Sorting
         let sortOption = { _id: -1 }; // default: newest
@@ -189,8 +182,7 @@ async function run() {
         const id = req.params.id;
         // Verify it's a valid ObjectId to prevent crashes
         if (!ObjectId.isValid(id)) {
-          // If it's a placeholder ID (e.g. from UI mock), return dummy data
-          if (["1", "2", "3", "4", "5", "6"].includes(id)) {
+                    if (["1", "2", "3", "4", "5", "6"].includes(id)) {
              return res.json({
                _id: id,
                title: "Golden Horizon",
@@ -220,10 +212,7 @@ async function run() {
       }
     });
 
-    // =====================
-    // Artist Dashboard APIs (Step 9)
-    // =====================
-
+            
     // GET: All artworks belonging to the logged-in artist
     app.get("/api/artist/artworks", verifyToken, verifyArtist, async (req, res) => {
       try {
@@ -316,10 +305,7 @@ async function run() {
       }
     });
 
-    // =====================
-    // Stripe Checkout APIs (Step 11)
-    // =====================
-    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+                const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
     // POST: Create Checkout Session for an Artwork
     app.post("/api/create-checkout-session", verifyToken, async (req, res) => {
@@ -343,8 +329,7 @@ async function run() {
                   images: [artwork.image],
                   description: `Original artwork by ${artwork.artistName}`,
                 },
-                unit_amount: Math.round(artwork.price * 100), // Stripe expects cents
-              },
+                unit_amount: Math.round(artwork.price * 100),               },
               quantity: 1,
             },
           ],
@@ -373,8 +358,7 @@ async function run() {
         const { session_id } = req.query;
         if (!session_id) return res.status(400).json({ msg: "Session ID is required" });
 
-        // Retrieve the session from Stripe
-        const session = await stripe.checkout.sessions.retrieve(session_id);
+                const session = await stripe.checkout.sessions.retrieve(session_id);
         
         if (session.payment_status !== "paid") {
           return res.status(400).json({ msg: "Payment not completed" });
@@ -382,28 +366,24 @@ async function run() {
 
         const { artworkId, buyerId, buyerName, artistId } = session.metadata;
 
-        // Check if transaction already exists (idempotency)
-        const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
+                const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
         if (existingTx) {
           return res.json({ msg: "Order already fulfilled", transaction: existingTx });
         }
 
-        // 1. Record the transaction
-        const transaction = {
+                const transaction = {
           stripeSessionId: session_id,
           artworkId,
           buyerId,
           buyerName,
           artistId,
-          amount: session.amount_total / 100, // Convert back from cents
-          currency: session.currency,
+          amount: session.amount_total / 100,           currency: session.currency,
           createdAt: new Date().toISOString(),
           type: "artwork_purchase"
         };
         await transactionCollection.insertOne(transaction);
 
-        // 2. Mark artwork as sold
-        await artworkCollection.updateOne(
+                await artworkCollection.updateOne(
           { _id: new ObjectId(artworkId) },
           { $set: { status: "sold" } }
         );
@@ -415,17 +395,13 @@ async function run() {
       }
     });
 
-    // =====================
-    // Stripe Subscription APIs (Step 12)
-    // =====================
-
+            
     // POST: Create Checkout Session for a Subscription
     app.post("/api/create-subscription-checkout", verifyToken, async (req, res) => {
       try {
         const { tier } = req.body;
         
-        // Ensure valid tier
-        if (tier !== "premium" && tier !== "pro") {
+                if (tier !== "premium" && tier !== "pro") {
            return res.status(400).json({ msg: "Invalid subscription tier" });
         }
 
@@ -468,14 +444,12 @@ async function run() {
 
         const { userId, tier } = session.metadata;
 
-        // Check if transaction already exists (idempotency)
-        const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
+                const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
         if (existingTx) {
           return res.json({ msg: "Upgrade already fulfilled", tier });
         }
 
-        // 1. Record the transaction
-        const transaction = {
+                const transaction = {
           stripeSessionId: session_id,
           userId,
           amount: session.amount_total / 100, 
@@ -486,10 +460,8 @@ async function run() {
         };
         await transactionCollection.insertOne(transaction);
 
-        // 2. Upgrade user in database
-        // Also update the session in better-auth? We just update the userCollection
-        await userCollection.updateOne(
-          { id: userId }, // better-auth uses string 'id' for the primary key
+                await userCollection.updateOne(
+          { id: userId }, 
           { $set: { tier: tier } }
         );
 
@@ -500,10 +472,64 @@ async function run() {
       }
     });
 
-    // =====================
-    // Health Check
-    // =====================
-    app.get("/", (req, res) => {
+            
+    // GET: User Purchase History
+    app.get("/api/user/purchases", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+        
+        // Fetch artwork purchases where buyerId matches
+        const purchases = await transactionCollection
+          .find({ buyerId: userId, type: "artwork_purchase" })
+          .sort({ _id: -1 })
+          .toArray();
+
+        res.json(purchases);
+      } catch (error) {
+        console.error("Error fetching purchases:", error);
+        res.status(500).json({ msg: "Failed to fetch purchase history" });
+      }
+    });
+
+    // PUT: Update User Profile
+    app.put("/api/user/profile", verifyToken, async (req, res) => {
+      try {
+        const { name } = req.body;
+        const userId = req.user.id;
+
+        if (!name) return res.status(400).json({ msg: "Name is required" });
+
+        await userCollection.updateOne(
+          { id: userId },
+          { $set: { name: name } }
+        );
+
+        res.json({ msg: "Profile updated successfully" });
+      } catch (error) {
+        console.error("Error updating profile:", error);
+        res.status(500).json({ msg: "Failed to update profile" });
+      }
+    });
+
+    // POST: Upgrade User to Artist
+    app.post("/api/user/upgrade-to-artist", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+
+        await userCollection.updateOne(
+          { id: userId },
+          { $set: { role: "artist" } }
+        );
+
+        res.json({ msg: "Congratulations! You are now an Artist." });
+      } catch (error) {
+        console.error("Error upgrading to artist:", error);
+        res.status(500).json({ msg: "Failed to upgrade account" });
+      }
+    });
+
+        // Health Check
+        app.get("/", (req, res) => {
       res.send("ArtHub server is running fine!");
     });
 
