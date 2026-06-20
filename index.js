@@ -37,6 +37,9 @@ const JWKS = createRemoteJWKSet(
 const verifyToken = async (req, res, next) => {
   let token = null;
 
+  console.log("verifyToken Check - Authorization Header:", req.headers.authorization);
+  console.log("verifyToken Check - Cookies:", req.headers.cookie);
+
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.split(" ")[1];
@@ -80,7 +83,7 @@ const verifyRole = (roles) => {
   };
 };
 
-const verifyArtist = verifyRole(["artist"]);
+const verifyArtist = verifyRole(["artist", "admin"]);
 const verifyAdmin = verifyRole(["admin"]);
 
 async function run() {
