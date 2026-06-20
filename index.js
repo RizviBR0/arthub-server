@@ -424,16 +424,8 @@ async function run() {
       try {
         const { tier } = req.body;
         
-        let amount = 0;
-        let title = "";
-        
-        if (tier === "premium") {
-           amount = 999;
-           title = "Premium Tier Upgrade";
-        } else if (tier === "pro") {
-           amount = 1999;
-           title = "Pro Tier Upgrade";
-        } else {
+        // Ensure valid tier
+        if (tier !== "premium" && tier !== "pro") {
            return res.status(400).json({ msg: "Invalid subscription tier" });
         }
 
@@ -441,19 +433,11 @@ async function run() {
           payment_method_types: ["card"],
           line_items: [
             {
-              price_data: {
-                currency: "usd",
-                product_data: {
-                  name: title,
-                  description: `Unlock ${tier} features on ArtHub.`,
-                },
-                unit_amount: amount, 
-              },
+              price: "price_1TkQD9FMJJEHpxBR4qnTHMOs",
               quantity: 1,
             },
           ],
-          // Using payment mode for the assignment mockup to avoid requiring pre-created Stripe Product IDs
-          mode: "payment", 
+          mode: "subscription", 
           success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing/success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing`,
           metadata: {
