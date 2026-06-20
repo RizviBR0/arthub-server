@@ -103,7 +103,9 @@ async function run() {
     app.get("/api/artworks/featured", async (req, res) => {
       try {
         const featured = await artworkCollection
-          .find({ status: { $ne: "sold" } })           .sort({ _id: -1 })           .limit(6)
+          .find({})
+          .sort({ _id: -1 })
+          .limit(6)
           .toArray();
         res.json(featured);
       } catch (error) {
