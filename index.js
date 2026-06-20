@@ -5,9 +5,11 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const Stripe = require("stripe");
 
 dotenv.config();
 
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const uri = process.env.MONGODB_URI;
 
 const app = express();
@@ -34,52 +36,36 @@ let sessionCollection;
 let userCollectionForAuth;
 
 const verifyToken = async (req, res, next) => {
-  let token = null;
-
-  // Check Authorization header first
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
-  }
-
-  // Fall back to cookie
-  if (!token && req.headers.cookie) {
-    const cookies = req.headers.cookie.split(";").map(c => c.trim());
-    const sessionCookie = cookies.find(c => c.startsWith("better-auth.session_token="));
-    if (sessionCookie) {
-      token = sessionCookie.split("=").slice(1).join("=");
-    }
-  }
-
-  if (!token) {
-    return res.status(401).json({ msg: "Unauthorized: No token provided" });
-  }
-
   try {
-    // Look up the session directly in MongoDB
-    const session = await sessionCollection.findOne({ token: token });
+    const authHeader = req.headers.authorization;
+    const cookieHeader = req.headers.cookie;
 
-    if (!session) {
+    if (!authHeader && !cookieHeader) {
+      return res.status(401).json({ msg: "Unauthorized: No token provided" });
+    }
+
+    // Forward the auth headers to BetterAuth on the Next.js server to validate
+    const authRes = await fetch(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/get-session`, {
+      headers: {
+        cookie: cookieHeader || "",
+        authorization: authHeader || ""
+      }
+    });
+
+    if (!authRes.ok) {
       return res.status(401).json({ msg: "Unauthorized: Invalid session" });
     }
 
-    // Check if session has expired
-    if (session.expiresAt && new Date(session.expiresAt) < new Date()) {
-      return res.status(401).json({ msg: "Unauthorized: Session expired" });
-    }
-
-    // Look up the user
-    const user = await userCollectionForAuth.findOne({ id: session.userId });
-
-    if (!user) {
+    const data = await authRes.json();
+    if (!data || !data.user) {
       return res.status(401).json({ msg: "Unauthorized: User not found" });
     }
 
-    req.user = user;
+    req.user = data.user;
     next();
   } catch (error) {
     console.error("Session verification error:", error);
-    return res.status(401).json({ msg: "Unauthorized" });
+    return res.status(401).json({ msg: "Unauthorized: Internal error" });
   }
 };
 
@@ -334,8 +320,6 @@ async function run() {
       }
     });
 
-                const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-
     // POST: Create Checkout Session for an Artwork
     app.post("/api/create-checkout-session", verifyToken, async (req, res) => {
       try {
@@ -425,44 +409,10 @@ async function run() {
     });
 
             
-    // POST: Create Checkout Session for a Subscription
-    app.post("/api/create-subscription-checkout", verifyToken, async (req, res) => {
+    // POST: Verify successful subscription and upgrade user
+    app.post("/api/subscription/fulfill", verifyToken, async (req, res) => {
       try {
-        const { tier } = req.body;
-        
-                if (tier !== "premium" && tier !== "pro") {
-           return res.status(400).json({ msg: "Invalid subscription tier" });
-        }
-
-        const session = await stripe.checkout.sessions.create({
-          payment_method_types: ["card"],
-          line_items: [
-            {
-              price: "price_1TkQD9FMJJEHpxBR4qnTHMOs",
-              quantity: 1,
-            },
-          ],
-          mode: "subscription", 
-          success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/pricing`,
-          metadata: {
-            userId: req.user.id,
-            tier: tier,
-            type: "subscription_upgrade"
-          },
-        });
-
-        res.json({ url: session.url });
-      } catch (error) {
-        console.error("Stripe subscription session error:", error);
-        res.status(500).json({ msg: "Failed to create subscription checkout session" });
-      }
-    });
-
-    // GET: Verify successful subscription and upgrade user
-    app.get("/api/subscription-success", verifyToken, async (req, res) => {
-      try {
-        const { session_id } = req.query;
+        const { session_id } = req.body;
         if (!session_id) return res.status(400).json({ msg: "Session ID is required" });
 
         const session = await stripe.checkout.sessions.retrieve(session_id);
