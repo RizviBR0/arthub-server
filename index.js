@@ -696,6 +696,43 @@ async function run() {
       }
     });
 
+        // GET: Specific user details (for public profile view)
+    app.get("/api/users/:id", async (req, res) => {
+      try {
+        const user = await userCollection.findOne(
+          { id: req.params.id },
+          { projection: { password: 0, email: 0 } } // hide sensitive info
+        );
+        if (!user) return res.status(404).json({ msg: "User not found" });
+        res.json(user);
+      } catch (error) {
+        console.error("Error fetching user:", error);
+        res.status(500).json({ msg: "Failed to fetch user" });
+      }
+    });
+
+    // =====================
+    // Profile APIs (Step 18)
+    // =====================
+
+    // PUT: Update user profile (bio, etc.)
+    app.put("/api/user/profile", verifyToken, async (req, res) => {
+      try {
+        const { bio } = req.body;
+        
+        // Update user in database
+        await userCollection.updateOne(
+          { id: req.user.id },
+          { $set: { bio: bio, updatedAt: new Date() } }
+        );
+
+        res.json({ msg: "Profile updated successfully" });
+      } catch (error) {
+        console.error("Error updating profile:", error);
+        res.status(500).json({ msg: "Failed to update profile" });
+      }
+    });
+
     // =====================
     // Admin APIs (Step 16)
     // =====================
