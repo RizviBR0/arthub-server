@@ -85,6 +85,40 @@ async function run() {
     const subscriptionCollection = db.collection("subscriptions");
 
     // =====================
+    // Public APIs (Step 6)
+    // =====================
+    
+    // GET: Featured Artworks (Latest 6)
+    app.get("/api/artworks/featured", async (req, res) => {
+      try {
+        const featured = await artworkCollection
+          .find({ status: { $ne: "sold" } }) // Don't show sold out items by default or just show them all
+          .sort({ _id: -1 }) // simple way to get latest if no createdAt
+          .limit(6)
+          .toArray();
+        res.json(featured);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ msg: "Failed to fetch featured artworks" });
+      }
+    });
+
+    // GET: Top Artists
+    app.get("/api/artists/top", async (req, res) => {
+      try {
+        const topArtists = await userCollection
+          .find({ role: "artist" })
+          .limit(3)
+          .project({ name: 1, image: 1, email: 1 })
+          .toArray();
+        res.json(topArtists);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ msg: "Failed to fetch top artists" });
+      }
+    });
+
+    // =====================
     // Health Check
     // =====================
     app.get("/", (req, res) => {
