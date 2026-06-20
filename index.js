@@ -762,6 +762,80 @@ async function run() {
       }
     });
 
+    // GET: Chart data for admin analytics
+    app.get("/api/admin/analytics/charts", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        // Category distribution
+        const categoryData = await artworkCollection.aggregate([
+          { $group: { _id: "$category", count: { $sum: 1 } } },
+          { $sort: { count: -1 } }
+        ]).toArray();
+
+        // Role distribution
+        const roleData = await userCollection.aggregate([
+          { $group: { _id: "$role", count: { $sum: 1 } } }
+        ]).toArray();
+
+        // Price range distribution
+        const priceRanges = await artworkCollection.aggregate([
+          {
+            $bucket: {
+              groupBy: "$price",
+              boundaries: [0, 100, 300, 500, 1000, 5000],
+              default: "5000+",
+              output: { count: { $sum: 1 } }
+            }
+          }
+        ]).toArray();
+
+        // Monthly artwork creation (last 6 months)
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+        const monthlyArtworks = await artworkCollection.aggregate([
+          { $match: { createdAt: { $gte: sixMonthsAgo } } },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ]).toArray();
+
+        // Monthly transactions (last 6 months)
+        const monthlyTransactions = await transactionCollection.aggregate([
+          { $match: { createdAt: { $gte: sixMonthsAgo } } },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 },
+              revenue: { $sum: "$amount" }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ]).toArray();
+
+        res.json({
+          categoryData: categoryData.map(c => ({ name: c._id || "Other", value: c.count })),
+          roleData: roleData.map(r => ({ name: r._id || "user", value: r.count })),
+          priceRanges: priceRanges.map(p => ({
+            range: p._id === "5000+" ? "$5000+" : `$${p._id}`,
+            count: p.count
+          })),
+          monthlyArtworks: monthlyArtworks.map(m => ({ month: m._id, artworks: m.count })),
+          monthlyTransactions: monthlyTransactions.map(m => ({
+            month: m._id,
+            transactions: m.count,
+            revenue: m.revenue
+          })),
+        });
+      } catch (error) {
+        console.error("Error fetching chart data:", error);
+        res.status(500).json({ msg: "Failed to fetch chart data" });
+      }
+    });
+
         // Health Check
         app.get("/", (req, res) => {
       res.send("ArtHub server is running fine!");
