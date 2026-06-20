@@ -528,6 +528,103 @@ async function run() {
       }
     });
 
+    // =====================
+    // Comment APIs (Step 14)
+    // =====================
+
+    // GET: Fetch comments for an artwork
+    app.get("/api/artworks/:id/comments", async (req, res) => {
+      try {
+        const artworkId = req.params.id;
+        const comments = await commentCollection
+          .find({ artworkId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(comments);
+      } catch (error) {
+        console.error("Error fetching comments:", error);
+        res.status(500).json({ msg: "Failed to fetch comments" });
+      }
+    });
+
+    // POST: Add a new comment
+    app.post("/api/comments", verifyToken, async (req, res) => {
+      try {
+        const { artworkId, text } = req.body;
+        
+        if (!text || text.trim() === "") {
+          return res.status(400).json({ msg: "Comment text is required" });
+        }
+
+        const newComment = {
+          artworkId,
+          userId: req.user.id,
+          userName: req.user.name,
+          text,
+          createdAt: new Date().toISOString()
+        };
+
+        const result = await commentCollection.insertOne(newComment);
+        res.status(201).json({ msg: "Comment added", comment: { ...newComment, _id: result.insertedId } });
+      } catch (error) {
+        console.error("Error adding comment:", error);
+        res.status(500).json({ msg: "Failed to add comment" });
+      }
+    });
+
+    // PUT: Edit a comment
+    app.put("/api/comments/:id", verifyToken, async (req, res) => {
+      try {
+        const commentId = req.params.id;
+        if (!ObjectId.isValid(commentId)) return res.status(400).json({ msg: "Invalid ID" });
+
+        const { text } = req.body;
+        if (!text || text.trim() === "") {
+          return res.status(400).json({ msg: "Comment text is required" });
+        }
+
+        const comment = await commentCollection.findOne({ _id: new ObjectId(commentId) });
+        if (!comment) return res.status(404).json({ msg: "Comment not found" });
+
+        // Ensure user owns the comment
+        if (comment.userId !== req.user.id) {
+          return res.status(403).json({ msg: "Forbidden" });
+        }
+
+        await commentCollection.updateOne(
+          { _id: new ObjectId(commentId) },
+          { $set: { text, editedAt: new Date().toISOString() } }
+        );
+
+        res.json({ msg: "Comment updated" });
+      } catch (error) {
+        console.error("Error editing comment:", error);
+        res.status(500).json({ msg: "Failed to update comment" });
+      }
+    });
+
+    // DELETE: Delete a comment
+    app.delete("/api/comments/:id", verifyToken, async (req, res) => {
+      try {
+        const commentId = req.params.id;
+        if (!ObjectId.isValid(commentId)) return res.status(400).json({ msg: "Invalid ID" });
+
+        const comment = await commentCollection.findOne({ _id: new ObjectId(commentId) });
+        if (!comment) return res.status(404).json({ msg: "Comment not found" });
+
+        // Ensure user owns the comment
+        if (comment.userId !== req.user.id) {
+          return res.status(403).json({ msg: "Forbidden" });
+        }
+
+        await commentCollection.deleteOne({ _id: new ObjectId(commentId) });
+        res.json({ msg: "Comment deleted" });
+      } catch (error) {
+        console.error("Error deleting comment:", error);
+        res.status(500).json({ msg: "Failed to delete comment" });
+      }
+    });
+
         // Health Check
         app.get("/", (req, res) => {
       res.send("ArtHub server is running fine!");
