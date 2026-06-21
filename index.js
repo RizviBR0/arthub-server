@@ -267,6 +267,7 @@ async function run() {
         const artwork = await artworkCollection.findOne({ _id: new ObjectId(id) });
         if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
         if (artwork.artistId !== req.user.id) return res.status(403).json({ msg: "Forbidden" });
+        if (artwork.status === "sold") return res.status(400).json({ msg: "Cannot update a sold artwork" });
 
         const updatedData = {
           title,
@@ -298,6 +299,7 @@ async function run() {
         const artwork = await artworkCollection.findOne({ _id: new ObjectId(id) });
         if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
         if (artwork.artistId !== req.user.id) return res.status(403).json({ msg: "Forbidden" });
+        if (artwork.status === "sold") return res.status(400).json({ msg: "Cannot delete a sold artwork" });
 
         await artworkCollection.deleteOne({ _id: new ObjectId(id) });
         res.json({ msg: "Artwork deleted successfully" });
@@ -317,6 +319,22 @@ async function run() {
         if (!artwork) return res.status(404).json({ msg: "Artwork not found" });
         if (artwork.status === "sold") return res.status(400).json({ msg: "Artwork is already sold" });
         if (artwork.artistId === req.user.id) return res.status(400).json({ msg: "You cannot buy your own artwork" });
+
+        // Check buyer subscription limits
+        const buyer = await userCollection.findOne({ _id: new ObjectId(req.user.id) });
+        const tier = buyer?.subscriptionTier || "free";
+        const purchaseCount = buyer?.purchaseCount || 0;
+        
+        let limit = 3; // free
+        if (tier === "pro") limit = 9;
+        if (tier === "premium") limit = Infinity;
+        
+        if (purchaseCount >= limit) {
+          return res.status(403).json({ 
+            msg: `Purchase limit reached for your ${tier} plan. Please upgrade to continue.`, 
+            code: "LIMIT_REACHED" 
+          });
+        }
 
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ["card"],
@@ -338,6 +356,7 @@ async function run() {
           cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/artworks/${artworkId}`,
           metadata: {
             artworkId: artworkId,
+            artworkTitle: artwork.title,
             buyerId: req.user.id,
             buyerName: req.user.name,
             artistId: artwork.artistId,
@@ -364,7 +383,7 @@ async function run() {
           return res.status(400).json({ msg: "Payment not completed" });
         }
 
-        const { artworkId, buyerId, buyerName, artistId } = session.metadata;
+        const { artworkId, artworkTitle, buyerId, buyerName, artistId } = session.metadata;
 
                 const existingTx = await transactionCollection.findOne({ stripeSessionId: session_id });
         if (existingTx) {
@@ -374,18 +393,26 @@ async function run() {
                 const transaction = {
           stripeSessionId: session_id,
           artworkId,
+          artworkTitle,
           buyerId,
           buyerName,
           artistId,
           amount: session.amount_total / 100,           currency: session.currency,
           createdAt: new Date().toISOString(),
-          type: "artwork_purchase"
+          type: "artwork_purchase",
+          status: "completed"
         };
         await transactionCollection.insertOne(transaction);
 
                 await artworkCollection.updateOne(
           { _id: new ObjectId(artworkId) },
           { $set: { status: "sold" } }
+        );
+        
+        // Increment buyer's purchase count
+        await userCollection.updateOne(
+          { _id: new ObjectId(buyerId) },
+          { $inc: { purchaseCount: 1 } }
         );
 
         res.json({ msg: "Order fulfilled successfully", transaction });
@@ -427,8 +454,8 @@ async function run() {
         await transactionCollection.insertOne(transaction);
 
                 await userCollection.updateOne(
-          { id: userId }, 
-          { $set: { tier: tier } }
+          { _id: new ObjectId(userId) }, 
+          { $set: { subscriptionTier: tier } }
         );
 
         res.json({ msg: "Subscription successful", tier });
@@ -466,7 +493,7 @@ async function run() {
         // BetterAuth SDK handles name and image updates directly.
         // We use this endpoint for custom fields like bio.
         await userCollection.updateOne(
-          { id: userId },
+          { _id: new ObjectId(userId) },
           { $set: { bio: bio || "" } }
         );
 
@@ -477,20 +504,31 @@ async function run() {
       }
     });
 
-    // POST: Upgrade User to Artist
-    app.post("/api/user/upgrade-to-artist", verifyToken, async (req, res) => {
+    // POST: Set Initial Role (For Google OAuth Onboarding)
+    app.post("/api/user/set-initial-role", verifyToken, async (req, res) => {
       try {
         const userId = req.user.id;
+        const { role } = req.body;
+        
+        if (!["user", "artist"].includes(role)) {
+          return res.status(400).json({ msg: "Invalid role selected" });
+        }
+
+        // Must check if they currently have no role
+        const currentUser = await userCollection.findOne({ _id: new ObjectId(userId) });
+        if (currentUser && currentUser.role) {
+          return res.status(403).json({ msg: "Role already set" });
+        }
 
         await userCollection.updateOne(
-          { id: userId },
-          { $set: { role: "artist" } }
+          { _id: new ObjectId(userId) },
+          { $set: { role: role } }
         );
 
-        res.json({ msg: "Congratulations! You are now an Artist." });
+        res.json({ msg: "Role saved successfully" });
       } catch (error) {
-        console.error("Error upgrading to artist:", error);
-        res.status(500).json({ msg: "Failed to upgrade account" });
+        console.error("Error setting initial role:", error);
+        res.status(500).json({ msg: "Failed to set role" });
       }
     });
 
@@ -622,7 +660,7 @@ async function run() {
         }
 
         await userCollection.updateOne(
-          { id: userId },
+          { _id: new ObjectId(userId) },
           { $set: { role: role } }
         );
 
@@ -637,7 +675,7 @@ async function run() {
     app.get("/api/users/:id", async (req, res) => {
       try {
         const user = await userCollection.findOne(
-          { id: req.params.id },
+          { _id: new ObjectId(req.params.id) },
           { projection: { password: 0, email: 0 } } // hide sensitive info
         );
         if (!user) return res.status(404).json({ msg: "User not found" });
@@ -648,27 +686,6 @@ async function run() {
       }
     });
 
-    // =====================
-    // Profile APIs (Step 18)
-    // =====================
-
-    // PUT: Update user profile (bio, etc.)
-    app.put("/api/user/profile", verifyToken, async (req, res) => {
-      try {
-        const { bio } = req.body;
-        
-        // Update user in database
-        await userCollection.updateOne(
-          { id: req.user.id },
-          { $set: { bio: bio, updatedAt: new Date() } }
-        );
-
-        res.json({ msg: "Profile updated successfully" });
-      } catch (error) {
-        console.error("Error updating profile:", error);
-        res.status(500).json({ msg: "Failed to update profile" });
-      }
-    });
 
     // =====================
     // Admin APIs (Step 16)
