@@ -415,6 +415,13 @@ async function run() {
           { $inc: { purchaseCount: 1 } }
         );
 
+        // Dummy Email Notification
+        console.log(`\n================= EMAIL NOTIFICATION =================`);
+        console.log(`To: ${buyerName} <buyer@example.com>`);
+        console.log(`Subject: Your Artwork Purchase Confirmation`);
+        console.log(`Message: Thank you for purchasing "${artworkTitle}". The artist will ship it soon.`);
+        console.log(`======================================================\n`);
+
         res.json({ msg: "Order fulfilled successfully", transaction });
       } catch (error) {
         console.error("Error fulfilling order:", error);
@@ -458,6 +465,13 @@ async function run() {
           { $set: { subscriptionTier: tier } }
         );
 
+        // Dummy Email Notification
+        console.log(`\n================= EMAIL NOTIFICATION =================`);
+        console.log(`To: User ID ${userId}`);
+        console.log(`Subject: Subscription Upgrade Successful`);
+        console.log(`Message: You have successfully upgraded to the ${tier} tier!`);
+        console.log(`======================================================\n`);
+
         res.json({ msg: "Subscription successful", tier });
       } catch (error) {
         console.error("Error fulfilling subscription:", error);
@@ -481,6 +495,60 @@ async function run() {
       } catch (error) {
         console.error("Error fetching purchases:", error);
         res.status(500).json({ msg: "Failed to fetch purchase history" });
+      }
+    });
+
+    // POST: Toggle Wishlist
+    app.post("/api/wishlist/toggle", verifyToken, async (req, res) => {
+      try {
+        const { artworkId } = req.body;
+        const userId = req.user.id;
+        
+        if (!artworkId) return res.status(400).json({ msg: "Artwork ID required" });
+
+        const user = await userCollection.findOne({ _id: new ObjectId(userId) });
+        const wishlist = user.wishlist || [];
+        
+        const isWishlisted = wishlist.includes(artworkId);
+        
+        if (isWishlisted) {
+          await userCollection.updateOne(
+            { _id: new ObjectId(userId) },
+            { $pull: { wishlist: artworkId } }
+          );
+          res.json({ msg: "Removed from wishlist", isWishlisted: false });
+        } else {
+          await userCollection.updateOne(
+            { _id: new ObjectId(userId) },
+            { $addToSet: { wishlist: artworkId } }
+          );
+          res.json({ msg: "Added to wishlist", isWishlisted: true });
+        }
+      } catch (error) {
+        console.error("Wishlist toggle error:", error);
+        res.status(500).json({ msg: "Server error" });
+      }
+    });
+
+    // GET: User Wishlist Artworks
+    app.get("/api/wishlist", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+        const user = await userCollection.findOne({ _id: new ObjectId(userId) });
+        
+        if (!user || !user.wishlist || user.wishlist.length === 0) {
+          return res.json([]);
+        }
+
+        const objectIds = user.wishlist.map(id => {
+          try { return new ObjectId(id); } catch (e) { return null; }
+        }).filter(Boolean);
+        
+        const artworks = await artworkCollection.find({ _id: { $in: objectIds } }).toArray();
+        res.json(artworks);
+      } catch (error) {
+        console.error("Fetch wishlist error:", error);
+        res.status(500).json({ msg: "Server error" });
       }
     });
 
