@@ -31,10 +31,6 @@ const client = new MongoClient(uri, {
   },
 });
 
-// verifyToken is defined inside run() after DB connection is established
-let sessionCollection;
-let userCollectionForAuth;
-
 const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -93,10 +89,6 @@ async function run() {
     const transactionCollection = db.collection("transactions");
     const commentCollection = db.collection("comments");
     const subscriptionCollection = db.collection("subscriptions");
-
-    // Wire up collections for auth middleware
-    sessionCollection = db.collection("session");
-    userCollectionForAuth = userCollection;
 
                 
     // GET: Featured Artworks (Latest 6)
@@ -600,9 +592,6 @@ async function run() {
       }
     });
 
-    // =====================
-    // Comment APIs (Step 14)
-    // =====================
 
     // GET: Fetch comments for an artwork
     app.get("/api/artworks/:id/comments", async (req, res) => {
@@ -697,9 +686,6 @@ async function run() {
       }
     });
 
-    // =====================
-    // Admin APIs (Step 15)
-    // =====================
 
     // GET: Fetch all users
     app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res) => {
@@ -755,9 +741,6 @@ async function run() {
     });
 
 
-    // =====================
-    // Admin APIs (Step 16)
-    // =====================
 
     // GET: All artworks for admin
     app.get("/api/admin/artworks", verifyToken, verifyAdmin, async (req, res) => {
