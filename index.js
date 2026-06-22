@@ -60,7 +60,7 @@ const verifyToken = async (req, res, next) => {
     }
 
     // Forward the auth headers to BetterAuth on the Next.js server to validate
-    const authRes = await fetch(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/get-session`, {
+    const authRes = await fetch(`${clientUrl || "http://localhost:3000"}/api/auth/get-session`, {
       headers: {
         cookie: cookieHeader || "",
         authorization: authHeader || ""
