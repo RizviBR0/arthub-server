@@ -80,7 +80,24 @@ const verifyToken = async (req, res, next) => {
     // If token is a JWT (contains two dots), verify using jose-cjs and JWKS
     if (token.split(".").length === 3) {
       const { payload } = await jwtVerify(token, JWKS);
-      req.user = payload;
+      // Better-Auth JWT payload usually stores user data in `payload.user` or we might need to fetch it
+      req.user = payload.user || payload;
+      
+      const userId = req.user.id || req.user.userId || payload.sub;
+      
+      // If role is missing, fetch user from database to populate it
+      if (!req.user.role && userId) {
+        const { ObjectId } = require("mongodb");
+        try {
+          const dbUser = await userCollection.findOne({ _id: new ObjectId(userId) });
+          if (dbUser) {
+            req.user.role = dbUser.role;
+            req.user.id = userId;
+          }
+        } catch (err) {
+          console.error("Error fetching user role from DB in verifyToken:", err);
+        }
+      }
       return next();
     }
 
