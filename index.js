@@ -6,6 +6,7 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const Stripe = require("stripe");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 dotenv.config();
 
@@ -16,6 +17,10 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.replace(/['"]/g, "").trim().replace(/\/$/, "") : "";
+
+const JWKS = createRemoteJWKSet(
+  new URL(`${clientUrl || "http://localhost:3000"}/api/auth/jwks`)
+);
 
 app.use(
   cors({
@@ -52,35 +57,55 @@ app.use(async (req, res, next) => {
 
 const verifyToken = async (req, res, next) => {
   try {
+    let token;
     const authHeader = req.headers.authorization;
     const cookieHeader = req.headers.cookie;
 
-    if (!authHeader && !cookieHeader) {
-      return res.status(401).json({ msg: "Unauthorized: No token provided" });
+    if (authHeader && authHeader.startsWith("Bearer")) {
+      token = authHeader.split(" ")[1];
+    } else if (cookieHeader) {
+      const cookies = cookieHeader.split("; ");
+      for (const cookie of cookies) {
+        if (cookie.startsWith("better-auth.session_token=") || cookie.startsWith("__Secure-better-auth.session_token=")) {
+          token = cookie.split("=")[1];
+          break;
+        }
+      }
     }
 
-    // Forward the auth headers to BetterAuth on the Next.js server to validate
-    const authRes = await fetch(`${clientUrl || "http://localhost:3000"}/api/auth/get-session`, {
+    if (!token) {
+      return res.status(401).json({ msg: "Unauthorized" });
+    }
+
+    // If token is a JWT (contains two dots), verify using jose-cjs and JWKS
+    if (token.split(".").length === 3) {
+      const { payload } = await jwtVerify(token, JWKS);
+      req.user = payload;
+      return next();
+    }
+
+    // If token is an opaque session token, verify via the Better Auth API
+    const authUrl = `${clientUrl || "http://localhost:3000"}/api/auth/get-session`;
+    const response = await fetch(authUrl, {
       headers: {
-        cookie: cookieHeader || "",
-        authorization: authHeader || ""
+        cookie: cookieHeader || `better-auth.session_token=${token}`
       }
     });
 
-    if (!authRes.ok) {
-      return res.status(401).json({ msg: "Unauthorized: Invalid session" });
+    if (!response.ok) {
+      throw new Error(`Auth API responded with ${response.status}`);
     }
 
-    const data = await authRes.json();
-    if (!data || !data.user) {
-      return res.status(401).json({ msg: "Unauthorized: User not found" });
+    const data = await response.json();
+    if (!data || !data.session || !data.user) {
+      throw new Error("Invalid session");
     }
 
     req.user = data.user;
     next();
   } catch (error) {
-    console.error("Session verification error:", error);
-    return res.status(401).json({ msg: "Unauthorized: Internal error" });
+    console.error("Session verification error:", error.message || error);
+    return res.status(401).json({ msg: "Unauthorized" });
   }
 };
 
@@ -108,6 +133,13 @@ const db = client.db("art-hub");
     const commentCollection = db.collection("comments");
     const subscriptionCollection = db.collection("subscriptions");
     const accountCollection = db.collection("account");
+
+    // Create Indexes for Performance
+    artworkCollection.createIndex({ category: 1 }).catch(console.error);
+    artworkCollection.createIndex({ artistId: 1 }).catch(console.error);
+    artworkCollection.createIndex({ title: "text", artistName: "text" }).catch(console.error);
+    transactionCollection.createIndex({ buyerId: 1 }).catch(console.error);
+    transactionCollection.createIndex({ artistId: 1 }).catch(console.error);
 
     // GET: Check User Auth Methods
     app.get("/api/user/auth-methods", verifyToken, async (req, res) => {
@@ -710,6 +742,10 @@ const db = client.db("art-hub");
         
         if (!text || text.trim() === "") {
           return res.status(400).json({ msg: "Comment text is required" });
+        }
+
+        if (req.user.role === "admin" || req.user.role === "artist") {
+          return res.status(403).json({ msg: "Admins and artists cannot comment" });
         }
 
         // Verify that the user has purchased the artwork
