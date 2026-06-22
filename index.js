@@ -599,6 +599,28 @@ async function run() {
       }
     });
 
+    // GET: Get current user details from database
+    app.get("/api/user/details", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+        const user = await userCollection.findOne({ _id: new ObjectId(userId) });
+        if (!user) return res.status(404).json({ msg: "User not found" });
+        res.json({
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          subscriptionTier: user.subscriptionTier || "free",
+          purchaseCount: user.purchaseCount || 0,
+          bio: user.bio || "",
+          image: user.image || ""
+        });
+      } catch (error) {
+        console.error("Error fetching user details:", error);
+        res.status(500).json({ msg: "Failed to fetch user details" });
+      }
+    });
+
     // PUT: Update User Profile
     app.put("/api/user/profile", verifyToken, async (req, res) => {
       try {
