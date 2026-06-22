@@ -89,6 +89,32 @@ async function run() {
     const transactionCollection = db.collection("transactions");
     const commentCollection = db.collection("comments");
     const subscriptionCollection = db.collection("subscriptions");
+    const accountCollection = db.collection("account");
+
+    // GET: Check User Auth Methods
+    app.get("/api/user/auth-methods", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+        let queryId = userId;
+        try {
+          queryId = new ObjectId(userId);
+        } catch (e) {
+          // ignore error if not valid objectid
+        }
+        
+        const accounts = await accountCollection.find({ 
+          $or: [
+            { userId: userId },
+            { userId: queryId }
+          ]
+        }).toArray();
+        const hasPassword = accounts.some(acc => acc.providerId === "credential");
+        res.json({ hasPassword });
+      } catch (error) {
+        console.error("Error fetching auth methods:", error);
+        res.status(500).json({ msg: "Failed to fetch auth methods" });
+      }
+    });
 
                 
     // GET: Featured Artworks (Latest 6)
@@ -646,6 +672,18 @@ async function run() {
           return res.status(400).json({ msg: "Comment text is required" });
         }
 
+        // Verify that the user has purchased the artwork
+        const purchase = await transactionCollection.findOne({
+          buyerId: req.user.id,
+          artworkId: artworkId,
+          type: "artwork_purchase",
+          status: "completed"
+        });
+
+        if (!purchase) {
+          return res.status(403).json({ msg: "You can only comment on artworks you have purchased" });
+        }
+
         const newComment = {
           artworkId,
           userId: req.user.id,
@@ -813,6 +851,7 @@ async function run() {
         const totalUsers = await userCollection.countDocuments();
         const totalArtists = await userCollection.countDocuments({ role: "artist" });
         const totalArtworks = await artworkCollection.countDocuments();
+        const totalArtworksSold = await artworkCollection.countDocuments({ status: "sold" });
         const totalTransactions = await transactionCollection.countDocuments();
 
         const revenueResult = await transactionCollection.aggregate([
@@ -824,6 +863,7 @@ async function run() {
           totalUsers,
           totalArtists,
           totalArtworks,
+          totalArtworksSold,
           totalTransactions,
           totalRevenue,
         });
