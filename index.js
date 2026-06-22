@@ -483,10 +483,39 @@ async function run() {
           .sort({ _id: -1 })
           .toArray();
 
-        res.json(purchases);
+        // Enrich purchases with full artwork details
+        const artworkIds = purchases.map(p => new ObjectId(p.artworkId));
+        const artworks = await artworkCollection.find({ _id: { $in: artworkIds } }).toArray();
+        
+        const enrichedPurchases = purchases.map(p => {
+          const artwork = artworks.find(a => a._id.toString() === p.artworkId);
+          return {
+            ...p,
+            artwork: artwork || null
+          };
+        });
+
+        res.json(enrichedPurchases);
       } catch (error) {
         console.error("Error fetching purchases:", error);
         res.status(500).json({ msg: "Failed to fetch purchase history" });
+      }
+    });
+
+    // GET: Artist Sales History
+    app.get("/api/artist/sales", verifyToken, verifyArtist, async (req, res) => {
+      try {
+        const artistId = req.user.id;
+        
+        const sales = await transactionCollection
+          .find({ artistId: artistId, type: "artwork_purchase" })
+          .sort({ _id: -1 })
+          .toArray();
+
+        res.json(sales);
+      } catch (error) {
+        console.error("Error fetching sales:", error);
+        res.status(500).json({ msg: "Failed to fetch sales history" });
       }
     });
 
