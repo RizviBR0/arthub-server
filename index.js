@@ -856,6 +856,24 @@ async function run() {
       }
     });
 
+    // PUT: Admin update artwork status
+    app.put("/api/admin/artworks/:id/status", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { status } = req.body;
+        const result = await artworkCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { status: status } }
+        );
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ msg: "Artwork not found" });
+        }
+        res.json({ msg: "Artwork status updated successfully" });
+      } catch (error) {
+        console.error("Error updating artwork status:", error);
+        res.status(500).json({ msg: "Failed to update artwork status" });
+      }
+    });
+
     // GET: All transactions for admin
     app.get("/api/admin/transactions", verifyToken, verifyAdmin, async (req, res) => {
       try {
