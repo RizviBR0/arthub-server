@@ -15,10 +15,12 @@ const uri = process.env.MONGODB_URI;
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.replace(/['"]/g, "").trim().replace(/\/$/, "") : "";
+
 app.use(
   cors({
     credentials: true,
-    origin: [process.env.CLIENT_URL],
+    origin: [clientUrl],
   })
 );
 app.use(express.json());
@@ -29,6 +31,23 @@ const client = new MongoClient(uri, {
     strict: true,
     deprecationErrors: true,
   },
+});
+
+let cachedClient = null;
+const connectToDb = async () => {
+  if (cachedClient) return cachedClient;
+  cachedClient = await client.connect();
+  return cachedClient;
+};
+
+app.use(async (req, res, next) => {
+  try {
+    await connectToDb();
+    next();
+  } catch (error) {
+    console.error("Database connection middleware error:", error);
+    res.status(500).json({ msg: "Database connection failed" });
+  }
 });
 
 const verifyToken = async (req, res, next) => {
@@ -78,10 +97,9 @@ const verifyRole = (roles) => {
 const verifyArtist = verifyRole(["artist", "admin"]);
 const verifyAdmin = verifyRole(["admin"]);
 
-async function run() {
-  try {
-    await client.connect();
-    const db = client.db("art-hub");
+// Database collections initialized synchronously
+
+const db = client.db("art-hub");
 
     // Collections
     const userCollection = db.collection("user");
@@ -370,8 +388,8 @@ async function run() {
             },
           ],
           mode: "payment",
-          success_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.CLIENT_URL || "http://localhost:3000"}/artworks/${artworkId}`,
+          success_url: `${clientUrl || "http://localhost:3000"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${clientUrl || "http://localhost:3000"}/artworks/${artworkId}`,
           metadata: {
             artworkId: artworkId,
             artworkTitle: artwork.title,
@@ -992,16 +1010,7 @@ async function run() {
       res.send("ArtHub server is running fine!");
     });
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
-  }
-}
-run().catch(console.dir);
+    // Connected to MongoDB in the background
 
 app.listen(PORT, () => {
   console.log(`ArtHub server running on port ${PORT}`);
