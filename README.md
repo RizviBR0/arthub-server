@@ -4,7 +4,7 @@
 This repository contains the backend Express server for the ArtHub marketplace. It provides the RESTful API endpoints required to handle authentication validation, artwork management, transactions, comments, and admin analytics. It serves as the data layer connecting the Next.js frontend with the MongoDB database and Stripe payment gateway.
 
 ## Live URL
-[Live Backend URL - Add Here]
+https://arthub-server-nine.vercel.app/
 
 ## Key Features
 *   **Secure API Endpoints**: Endpoints protected with JWT verification against the BetterAuth JWKS.
