@@ -83,7 +83,7 @@ const verifyToken = async (req, res, next) => {
       // Better-Auth JWT payload usually stores user data in `payload.user` or we might need to fetch it
       req.user = payload.user || payload;
       
-      const userId = req.user.id || req.user.userId || payload.sub;
+      const userId = req.user.id || req.user.userId || payload.sub || (payload.session && payload.session.userId);
       
       // If role is missing, fetch user from database to populate it
       if (!req.user.role && userId) {
@@ -97,6 +97,8 @@ const verifyToken = async (req, res, next) => {
         } catch (err) {
           console.error("Error fetching user role from DB in verifyToken:", err);
         }
+      } else if (!req.user.role) {
+         console.log("No userId found in payload:", payload);
       }
       return next();
     }
@@ -130,7 +132,8 @@ const verifyToken = async (req, res, next) => {
 const verifyRole = (roles) => {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ msg: "Forbidden: Access denied" });
+      console.log(`[verifyRole] Failed. Expected one of ${roles}, but got user:`, req.user);
+      return res.status(403).json({ msg: `Forbidden: Access denied. Expected ${roles}, got ${req.user ? req.user.role : "undefined user"}` });
     }
     next();
   };
